@@ -49,9 +49,9 @@ DEFAULT_FIIS = [
 _env_fiis = os.environ.get("FIIS", "").strip()
 FIIS = [t.strip().upper() for t in _env_fiis.split(",") if t.strip()] if _env_fiis else DEFAULT_FIIS
 
-PAUSA_ENTRE_FIIS = 3      # segundos entre chamadas (respeita rate limit)
-MAX_RETRIES = 3           # tentativas em caso de rate limit
-RETRY_BACKOFF = 20        # segundos de espera entre retries
+PAUSA_ENTRE_FIIS = 8      # segundos entre chamadas (respeita rate limit por minuto)
+MAX_RETRIES = 5           # tentativas em caso de rate limit
+RETRY_BACKOFF = 35        # segundos de espera entre retries (cobre a janela de 1 min)
 
 
 # ----------------------------------------------------------------------
@@ -99,8 +99,21 @@ def analisar_fii(ticker: str) -> dict:
 
         if resp.status_code == 429:
             if tentativa < MAX_RETRIES:
-                print(f"  [{ticker}] rate limit (429), aguardando {RETRY_BACKOFF}s...")
-                time.sleep(RETRY_BACKOFF)
+                # Tenta usar o tempo de espera sugerido pelo próprio Google
+                espera = RETRY_BACKOFF
+                try:
+                    err = resp.json().get("error", {})
+                    for det in err.get("details", []):
+                        if "retryDelay" in det:
+                            # formato tipo "27s"
+                            s = str(det["retryDelay"]).replace("s", "").strip()
+                            if s.isdigit():
+                                espera = int(s) + 3  # margem de segurança
+                except Exception:
+                    pass
+                print(f"  [{ticker}] rate limit (429), aguardando {espera}s "
+                      f"(tentativa {tentativa}/{MAX_RETRIES})...")
+                time.sleep(espera)
                 continue
             return {"ticker": ticker, "erro": "Rate limit persistente (429)"}
 
