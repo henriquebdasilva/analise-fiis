@@ -1,1 +1,38 @@
+name: Análise Mensal de FIIs
 
+on:
+  schedule:
+    - cron: "0 12 20 * *"
+  workflow_dispatch:
+
+jobs:
+  analisar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+
+      - name: Rodar análise e enviar e-mail
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          FIIS: ${{ secrets.FIIS }}
+        run: python analise_fiis.py
+
+      - name: Salvar HTML se o envio falhar (para debug)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: analise-html
+          path: analise_falhou.html
+          if-no-files-found: ignore
