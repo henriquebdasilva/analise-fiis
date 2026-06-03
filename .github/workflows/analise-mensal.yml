@@ -1,15 +1,15 @@
-name: Análise Mensal de FIIs
+name: Analise Mensal de FIIs
 
-on:
+"on":
+  workflow_dispatch:
   schedule:
     - cron: "0 12 20 * *"
-  workflow_dispatch:
 
 jobs:
   analisar:
     runs-on: ubuntu-latest
     steps:
-      - name: Baixar o código
+      - name: Baixar o codigo
         uses: actions/checkout@v4
 
       - name: Configurar Python
@@ -17,10 +17,10 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Instalar dependências
+      - name: Instalar dependencias
         run: pip install -r requirements.txt
 
-      - name: Rodar análise e enviar e-mail
+      - name: Rodar analise e enviar e-mail
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
@@ -29,7 +29,7 @@ jobs:
           FIIS: ${{ secrets.FIIS }}
         run: python analise_fiis.py
 
-      - name: Salvar HTML se o envio falhar (para debug)
+      - name: Salvar HTML se falhar
         if: failure()
         uses: actions/upload-artifact@v4
         with:
