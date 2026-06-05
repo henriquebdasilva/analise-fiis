@@ -150,12 +150,16 @@ def analisar_fii(ticker: str) -> dict:
         f'que possível), ou null>,\n'
         f'  "dy_12m": <decimal ex 0.115 ou null>,\n'
         f'  "pvp": <decimal ex 0.92 ou null>,\n'
-        f'  "rentabilidade_12m": <retorno TOTAL dos últimos 12 meses (valorização da cota '
-        f'+ dividendos), decimal ex 0.14 para 14%, pode ser negativo, ou null>,\n'
-        f'  "cdi_12m": <CDI acumulado dos últimos 12 meses, decimal ex 0.135, ou null>,\n'
+        f'  "rentabilidade_12m": <retorno TOTAL do FII nos últimos 12 meses (valorização '
+        f'da cota + dividendos), decimal ex 0.14, pode ser negativo (dado público no '
+        f'Status Invest — preencha sempre que possível), ou null>,\n'
+        f'  "cdi_12m": <CDI acumulado nos últimos 12 meses, decimal ex 0.135 '
+        f'(preencha sempre, é um dado macro conhecido), ou null>,\n'
+        f'  "ifix_12m": <variação do índice IFIX nos últimos 12 meses, decimal ex 0.09, '
+        f'pode ser negativo (dado público), ou null>,\n'
         f'  "rentabilidade_mensal": [<retorno ACUMULADO mês a mês dos últimos 12 meses, '
         f'do mais antigo ao mais recente, começando próximo de 0 e crescendo; cada item '
-        f'{{"mes":"AAAA-MM","fii":<decimal acumulado do FII>,"cdi":<decimal acumulado do CDI>}}; '
+        f'{{"mes":"AAAA-MM","fii":<acum. do FII>,"cdi":<acum. do CDI>,"ifix":<acum. do IFIX>}}; '
         f'[] se não conseguir estimar com confiança>],\n'
         f'  "vacancia_fisica": <decimal 0-1 ou null se não for tijolo>,\n'
         f'  "receita_locacao_mes": "<receita de locação do último mês com unidade, '
@@ -389,19 +393,23 @@ def _parse_mes(s):
     return (0, s[-3:])
 
 
-def _grafico_rentabilidade(rent, cdi):
-    """Compara o retorno total do FII (12m) com o CDI (12m) em barras."""
-    if not isinstance(rent, (int, float)) or not isinstance(cdi, (int, float)):
+def _grafico_rentabilidade(rent, cdi, ifix=None):
+    """Barras comparando retorno 12m: FII vs CDI vs IFIX. Mostra o que houver."""
+    rent, cdi, ifix = _num(rent), _num(cdi), _num(ifix)
+    itens = [("Este FII", rent, COR_DY), ("CDI", cdi, "#9AA7B5"), ("IFIX", ifix, COR_PRAZO)]
+    itens = [(n, v, c) for n, v, c in itens if v is not None]
+    if not itens:
         return ""
-    vmax = max(abs(rent), abs(cdi), 0.0001)
+    vmax = max([abs(v) for _, v, _ in itens] + [0.0001])
 
-    def barra(label, val, cor):
+    linhas = []
+    for nome, val, cor in itens:
         largura = round(max(0, val) / vmax * 100)
         cor_val = COR_VAC if val < 0 else "#444"
-        return (
+        linhas.append(
             "<tr>"
             f"<td style='font-size:12px;color:#444;padding:3px 8px 3px 0;"
-            f"white-space:nowrap;'>{label}</td>"
+            f"white-space:nowrap;'>{nome}</td>"
             f"<td style='padding:3px 0;width:100%;'>"
             f"<div style='background:#EDF1F6;border-radius:4px;width:100%;'>"
             f"<div style='width:{largura}%;background:{cor};height:14px;"
@@ -410,43 +418,60 @@ def _grafico_rentabilidade(rent, cdi):
             f"padding:3px 0 3px 8px;white-space:nowrap;' align='right'>{_fmt_pct(val)}</td>"
             "</tr>"
         )
+    tabela = ("<table role='presentation' cellpadding='0' cellspacing='0' width='100%' "
+              "style='margin:4px 0;'>" + "".join(linhas) + "</table>")
+    return tabela + _veredito_rent(rent, cdi, ifix)
 
-    diff = rent - cdi
-    if diff >= 0:
-        veredito = (f"<span style='color:{COR_INDEX};'>▲ {_fmt_pct(diff)} acima do CDI</span>")
-    else:
-        veredito = (f"<span style='color:{COR_VAC};'>▼ {_fmt_pct(abs(diff))} abaixo do CDI</span>")
 
-    return (
-        "<table role='presentation' cellpadding='0' cellspacing='0' width='100%' "
-        "style='margin:4px 0;'>"
-        + barra("Este FII (total)", rent, COR_DY)
-        + barra("CDI", cdi, "#9AA7B5")
-        + "</table>"
-        f"<div style='font-size:12px;margin-top:3px;font-weight:bold;'>{veredito}</div>"
-    )
+def _veredito_rent(rent, cdi, ifix):
+    """Texto comparando o FII com CDI e IFIX."""
+    rent, cdi, ifix = _num(rent), _num(cdi), _num(ifix)
+    if rent is None:
+        return ""
+    partes = []
+    if cdi is not None:
+        d = rent - cdi
+        cor = COR_INDEX if d >= 0 else COR_VAC
+        seta = "▲" if d >= 0 else "▼"
+        partes.append(f"<span style='color:{cor};'>{seta} {_fmt_pct(abs(d))} "
+                      f"{'acima' if d >= 0 else 'abaixo'} do CDI</span>")
+    if ifix is not None:
+        d = rent - ifix
+        cor = COR_INDEX if d >= 0 else COR_VAC
+        seta = "▲" if d >= 0 else "▼"
+        partes.append(f"<span style='color:{cor};'>{seta} {_fmt_pct(abs(d))} "
+                      f"{'acima' if d >= 0 else 'abaixo'} do IFIX</span>")
+    if not partes:
+        return ""
+    return (f"<div style='font-size:12px;margin-top:3px;font-weight:bold;'>"
+            + " · ".join(partes) + "</div>")
 
 
 def _gerar_linha_png(serie):
-    """Gera um gráfico de LINHA (FII vs CDI) em PNG. Retorna bytes ou None.
-    serie = lista de {'mes','fii','cdi'} (retorno acumulado decimal)."""
+    """Gera gráfico de LINHA (FII vs CDI vs IFIX) em PNG. Retorna bytes ou None.
+    serie = lista de {'mes','fii','cdi','ifix'} (retorno acumulado decimal).
+    Desenha apenas as linhas que tiverem dados."""
     pontos = []
     for p in serie:
         if not isinstance(p, dict):
             continue
         fii = _num(p.get("fii"))
         cdi = _num(p.get("cdi"))
-        if fii is None and cdi is None:
+        ifix = _num(p.get("ifix"))
+        if fii is None and cdi is None and ifix is None:
             continue
         chave, rotulo = _parse_mes(p.get("mes", ""))
-        pontos.append((chave, rotulo, fii, cdi))
+        pontos.append((chave, rotulo, fii, cdi, ifix))
     if len(pontos) < 3:
         return None
     pontos.sort(key=lambda x: x[0])
 
     rotulos = [p[1] for p in pontos]
-    fii_vals = [(p[2] * 100 if p[2] is not None else None) for p in pontos]
-    cdi_vals = [(p[3] * 100 if p[3] is not None else None) for p in pontos]
+    series_def = [
+        ("Este FII", "#2E75B6", [p[2] for p in pontos]),
+        ("CDI", "#9AA7B5", [p[3] for p in pontos]),
+        ("IFIX", "#C77B30", [p[4] for p in pontos]),
+    ]
 
     try:
         import matplotlib
@@ -456,10 +481,17 @@ def _gerar_linha_png(serie):
 
         fig, ax = plt.subplots(figsize=(6.0, 2.6), dpi=100)
         x = list(range(len(rotulos)))
-        ax.plot(x, fii_vals, color="#2E75B6", marker="o", markersize=3,
-                linewidth=2, label="Este FII")
-        ax.plot(x, cdi_vals, color="#9AA7B5", marker="o", markersize=3,
-                linewidth=2, label="CDI")
+        algum = False
+        for nome, cor, vals in series_def:
+            # só desenha a linha se tiver pelo menos um valor
+            if any(v is not None for v in vals):
+                vals_pct = [(v * 100 if v is not None else None) for v in vals]
+                ax.plot(x, vals_pct, color=cor, marker="o", markersize=3,
+                        linewidth=2, label=nome)
+                algum = True
+        if not algum:
+            plt.close(fig)
+            return None
         ax.set_xticks(x)
         ax.set_xticklabels(rotulos, fontsize=8)
         ax.tick_params(axis="y", labelsize=8)
@@ -570,8 +602,8 @@ def _card_fii(ticker, dados, imagens=None):
                 for d in serie_raw]
     grafico_dy = _secao("DY mês a mês (R$/cota, últimos 12m)", _barras_verticais(serie_dy, COR_DY))
 
-    # Rentabilidade 12m vs CDI: gráfico de LINHA (imagem) se houver série mensal;
-    # senão, cai para as barras de comparação.
+    # Rentabilidade 12m vs CDI vs IFIX: gráfico de LINHA (imagem) se houver série
+    # mensal; senão, cai para as barras de comparação (que mostram o que houver).
     conteudo_rent = ""
     png = _gerar_linha_png(dados.get("rentabilidade_mensal") or [])
     if png is not None and imagens is not None:
@@ -580,23 +612,15 @@ def _card_fii(ticker, dados, imagens=None):
         conteudo_rent = (
             f"<img src='cid:{cid}' width='100%' "
             f"style='max-width:600px;display:block;border:0;outline:none;' "
-            f"alt='Rentabilidade {ticker} vs CDI'>"
+            f"alt='Rentabilidade {ticker} vs CDI vs IFIX'>"
+            + _veredito_rent(dados.get("rentabilidade_12m"),
+                             dados.get("cdi_12m"), dados.get("ifix_12m"))
         )
-        # Veredito textual abaixo do gráfico
-        rent = _num(dados.get("rentabilidade_12m"))
-        cdi = _num(dados.get("cdi_12m"))
-        if rent is not None and cdi is not None:
-            diff = rent - cdi
-            if diff >= 0:
-                conteudo_rent += (f"<div style='font-size:12px;margin-top:3px;font-weight:bold;"
-                                  f"color:{COR_INDEX};'>▲ {_fmt_pct(diff)} acima do CDI em 12m</div>")
-            else:
-                conteudo_rent += (f"<div style='font-size:12px;margin-top:3px;font-weight:bold;"
-                                  f"color:{COR_VAC};'>▼ {_fmt_pct(abs(diff))} abaixo do CDI em 12m</div>")
     else:
         conteudo_rent = _grafico_rentabilidade(dados.get("rentabilidade_12m"),
-                                               dados.get("cdi_12m"))
-    grafico_rent = _secao("Rentabilidade 12m (cota + dividendos) vs CDI", conteudo_rent)
+                                               dados.get("cdi_12m"),
+                                               dados.get("ifix_12m"))
+    grafico_rent = _secao("Rentabilidade 12m (cota + dividendos) vs CDI vs IFIX", conteudo_rent)
 
     # Distribuição geográfica
     grafico_geo = _secao("Distribuição geográfica",

@@ -10,6 +10,51 @@ e-mail formatado enviado para você.
 
 ---
 
+## ⚙️ Configurações (settings.txt)
+
+O arquivo **`settings.txt`** controla o robô sem mexer no código:
+
+```
+EMAIL_TO=destino@email.com    # para quem enviar (em branco = seu próprio Gmail)
+DIA_DO_MES=20                 # dia do mês em que o relatório é enviado
+MODEL=gemini-2.5-flash-lite   # modelo do Gemini (veja abaixo)
+PAUSA_SEGUNDOS=20             # pausa entre cada FII (aumente se der rate limit)
+```
+
+Para mudar, edite o arquivo no GitHub (clique nele → lápis → edita → commit).
+
+**Sobre o MODEL e o rate limit (429):** o Google reduziu muito os limites do
+tier gratuito no fim de 2025, e a busca na web (grounding) consome mais cota.
+Por isso o padrão é o **`gemini-2.5-flash-lite`**, que tem limite bem maior
+(~30/min e 1.000/dia). Se ainda aparecer 429, aumente o `PAUSA_SEGUNDOS` para
+25 ou 30. Se quiser qualidade um pouco melhor e topar alguns 429 (que o robô
+re-tenta sozinho), troque para `gemini-2.5-flash`.
+
+> **Como o dia funciona:** o GitHub aciona o robô todos os dias, mas ele só
+> executa de fato no dia configurado em `DIA_DO_MES` — nos outros dias encerra
+> em segundos. O disparo manual ("Run workflow") roda sempre, para testar.
+
+---
+
+## 📝 Editar a lista de FIIs
+
+A carteira fica no arquivo **`carteira.txt`** — um ticker por linha. Para adicionar
+ou remover um FII, edite esse arquivo direto no GitHub:
+
+1. No repositório, clique em **`carteira.txt`**
+2. Clique no lápis (✏️ Edit)
+3. Adicione/remova as linhas (um ticker por linha)
+4. **Commit changes**
+
+Linhas em branco e linhas começando com `#` são ignoradas (servem como comentário).
+Não precisa mexer no código Python.
+
+> Ordem de prioridade: se você definir o secret `FIIS` no GitHub, ele tem
+> prioridade sobre o `carteira.txt`. Sem o secret, vale o arquivo. Sem o arquivo,
+> usa a lista padrão embutida no script.
+
+---
+
 ## ✅ O que você vai precisar (tudo gratuito)
 
 1. Conta no **GitHub** (github.com)
@@ -45,6 +90,8 @@ e-mail formatado enviado para você.
 4. Faça upload destes arquivos (botão "Add file" → "Upload files"):
    - `analise_fiis.py`
    - `requirements.txt`
+   - `carteira.txt`
+   - `settings.txt`
    - a pasta `.github/workflows/analise-mensal.yml`
    
    > Dica: para subir a pasta `.github/workflows/`, ao fazer upload digite
