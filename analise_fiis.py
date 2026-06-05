@@ -18,6 +18,7 @@ import smtplib
 from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.image import MIMEImage
 
 import requests
 
@@ -141,8 +142,21 @@ def analisar_fii(ticker: str) -> dict:
         f"{{\n"
         f'  "descricao": "<descrição breve do fundo em 1 frase: o que é, segmento, gestora>",\n'
         f'  "tipo": "papel|tijolo|hibrido|fof",\n'
+        f'  "cota_atual": <preço de fechamento mais recente da cota em reais, '
+        f'apenas o número decimal ex 102.50 (este dado é público e quase sempre existe '
+        f'no Status Invest — preencha sempre que possível), ou null>,\n'
+        f'  "ultimo_dividendo": <valor do último provento/dividendo pago por cota em reais, '
+        f'apenas o número decimal ex 0.85 (dado público no Status Invest — preencha sempre '
+        f'que possível), ou null>,\n'
         f'  "dy_12m": <decimal ex 0.115 ou null>,\n'
         f'  "pvp": <decimal ex 0.92 ou null>,\n'
+        f'  "rentabilidade_12m": <retorno TOTAL dos últimos 12 meses (valorização da cota '
+        f'+ dividendos), decimal ex 0.14 para 14%, pode ser negativo, ou null>,\n'
+        f'  "cdi_12m": <CDI acumulado dos últimos 12 meses, decimal ex 0.135, ou null>,\n'
+        f'  "rentabilidade_mensal": [<retorno ACUMULADO mês a mês dos últimos 12 meses, '
+        f'do mais antigo ao mais recente, começando próximo de 0 e crescendo; cada item '
+        f'{{"mes":"AAAA-MM","fii":<decimal acumulado do FII>,"cdi":<decimal acumulado do CDI>}}; '
+        f'[] se não conseguir estimar com confiança>],\n'
         f'  "vacancia_fisica": <decimal 0-1 ou null se não for tijolo>,\n'
         f'  "receita_locacao_mes": "<receita de locação do último mês com unidade, '
         f'ex: R$ 12,5 mi, ou null se não encontrar/não aplicável>",\n'
@@ -224,23 +238,44 @@ def _extrair_json(texto: str):
 # ----------------------------------------------------------------------
 # Helpers de formatação
 # ----------------------------------------------------------------------
+def _num(v):
+    """Converte para float aceitando número ou string ('R$ 102,50', '11,5%', '0.92')."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    if isinstance(v, str):
+        s = v.strip().replace("R$", "").replace("%", "").replace(" ", "")
+        if not s:
+            return None
+        if "," in s and "." in s:          # 1.234,56 -> 1234.56
+            s = s.replace(".", "").replace(",", ".")
+        elif "," in s:                       # 102,50 -> 102.50
+            s = s.replace(",", ".")
+        try:
+            return float(s)
+        except ValueError:
+            return None
+    return None
+
+
 def _fmt_pct(v):
-    try:
-        return f"{float(v) * 100:.1f}%".replace(".", ",")
-    except (TypeError, ValueError):
+    v = _num(v)
+    if v is None:
         return "—"
+    return f"{v * 100:.1f}%".replace(".", ",")
 
 def _fmt_num(v, casas=2):
-    try:
-        return f"{float(v):.{casas}f}".replace(".", ",")
-    except (TypeError, ValueError):
+    v = _num(v)
+    if v is None:
         return "—"
+    return f"{v:.{casas}f}".replace(".", ",")
 
 def _fmt_money(v):
-    try:
-        return f"R$ {float(v):.4f}".replace(".", ",")
-    except (TypeError, ValueError):
+    v = _num(v)
+    if v is None:
         return "—"
+    return f"R$ {v:.4f}".replace(".", ",")
 
 
 def _barras_verticais(serie, cor):
@@ -252,7 +287,7 @@ def _barras_verticais(serie, cor):
     celulas = []
     for s in valores:
         h = max(4, round(s["valor"] / vmax * 80))
-        rotulo = str(s.get("label", ""))[-2:]  # mostra só o mês (MM)
+        rotulo = str(s.get("label", ""))  # já vem como 'jan', 'fev', etc.
         celulas.append(
             f"<td valign='bottom' align='center' style='padding:0 2px;'>"
             f"<div style='font-size:8px;color:#888;margin-bottom:2px;'>{_fmt_num(s['valor'],3)}</div>"
@@ -330,20 +365,150 @@ def _lista_texto(texto, cor_marcador):
             + "".join(linhas) + "</table>")
 
 
+MESES_ABREV = ["jan", "fev", "mar", "abr", "mai", "jun",
+               "jul", "ago", "set", "out", "nov", "dez"]
+
+
+def _parse_mes(s):
+    """Converte 'AAAA-MM' (ou MM/AAAA) em (chave_ordenavel, rotulo 'mmm').
+    Em caso de falha retorna (0, texto curto)."""
+    import re
+    s = str(s).strip()
+    m = re.search(r"(\d{4})[-/.](\d{1,2})", s)        # AAAA-MM
+    if m:
+        ano, mes = int(m.group(1)), int(m.group(2))
+        if 1 <= mes <= 12:
+            return (ano * 100 + mes, MESES_ABREV[mes - 1])
+    m = re.search(r"(\d{1,2})[-/.](\d{2,4})", s)        # MM/AAAA
+    if m:
+        mes, ano = int(m.group(1)), int(m.group(2))
+        if ano < 100:
+            ano += 2000
+        if 1 <= mes <= 12:
+            return (ano * 100 + mes, MESES_ABREV[mes - 1])
+    return (0, s[-3:])
+
+
+def _grafico_rentabilidade(rent, cdi):
+    """Compara o retorno total do FII (12m) com o CDI (12m) em barras."""
+    if not isinstance(rent, (int, float)) or not isinstance(cdi, (int, float)):
+        return ""
+    vmax = max(abs(rent), abs(cdi), 0.0001)
+
+    def barra(label, val, cor):
+        largura = round(max(0, val) / vmax * 100)
+        cor_val = COR_VAC if val < 0 else "#444"
+        return (
+            "<tr>"
+            f"<td style='font-size:12px;color:#444;padding:3px 8px 3px 0;"
+            f"white-space:nowrap;'>{label}</td>"
+            f"<td style='padding:3px 0;width:100%;'>"
+            f"<div style='background:#EDF1F6;border-radius:4px;width:100%;'>"
+            f"<div style='width:{largura}%;background:{cor};height:14px;"
+            f"border-radius:4px;'></div></div></td>"
+            f"<td style='font-size:12px;color:{cor_val};font-weight:bold;"
+            f"padding:3px 0 3px 8px;white-space:nowrap;' align='right'>{_fmt_pct(val)}</td>"
+            "</tr>"
+        )
+
+    diff = rent - cdi
+    if diff >= 0:
+        veredito = (f"<span style='color:{COR_INDEX};'>▲ {_fmt_pct(diff)} acima do CDI</span>")
+    else:
+        veredito = (f"<span style='color:{COR_VAC};'>▼ {_fmt_pct(abs(diff))} abaixo do CDI</span>")
+
+    return (
+        "<table role='presentation' cellpadding='0' cellspacing='0' width='100%' "
+        "style='margin:4px 0;'>"
+        + barra("Este FII (total)", rent, COR_DY)
+        + barra("CDI", cdi, "#9AA7B5")
+        + "</table>"
+        f"<div style='font-size:12px;margin-top:3px;font-weight:bold;'>{veredito}</div>"
+    )
+
+
+def _gerar_linha_png(serie):
+    """Gera um gráfico de LINHA (FII vs CDI) em PNG. Retorna bytes ou None.
+    serie = lista de {'mes','fii','cdi'} (retorno acumulado decimal)."""
+    pontos = []
+    for p in serie:
+        if not isinstance(p, dict):
+            continue
+        fii = _num(p.get("fii"))
+        cdi = _num(p.get("cdi"))
+        if fii is None and cdi is None:
+            continue
+        chave, rotulo = _parse_mes(p.get("mes", ""))
+        pontos.append((chave, rotulo, fii, cdi))
+    if len(pontos) < 3:
+        return None
+    pontos.sort(key=lambda x: x[0])
+
+    rotulos = [p[1] for p in pontos]
+    fii_vals = [(p[2] * 100 if p[2] is not None else None) for p in pontos]
+    cdi_vals = [(p[3] * 100 if p[3] is not None else None) for p in pontos]
+
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from io import BytesIO
+
+        fig, ax = plt.subplots(figsize=(6.0, 2.6), dpi=100)
+        x = list(range(len(rotulos)))
+        ax.plot(x, fii_vals, color="#2E75B6", marker="o", markersize=3,
+                linewidth=2, label="Este FII")
+        ax.plot(x, cdi_vals, color="#9AA7B5", marker="o", markersize=3,
+                linewidth=2, label="CDI")
+        ax.set_xticks(x)
+        ax.set_xticklabels(rotulos, fontsize=8)
+        ax.tick_params(axis="y", labelsize=8)
+        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0f}%"))
+        ax.legend(fontsize=8, loc="upper left", frameon=False)
+        ax.grid(True, axis="y", linestyle=":", alpha=0.5)
+        for spine in ["top", "right"]:
+            ax.spines[spine].set_visible(False)
+        fig.tight_layout(pad=0.5)
+
+        buf = BytesIO()
+        fig.savefig(buf, format="png", bbox_inches="tight")
+        plt.close(fig)
+        return buf.getvalue()
+    except Exception as e:
+        print(f"  (aviso: falha ao gerar gráfico de linha: {e})")
+        return None
+
+
 # ----------------------------------------------------------------------
 # Card de um FII
 # ----------------------------------------------------------------------
-def _card_fii(ticker, dados):
+def _card_fii(ticker, dados, imagens=None):
     tipo = (dados.get("tipo") or "").lower()
     tipo_label = {"papel": "Papel/CRI", "tijolo": "Tijolo",
                   "hibrido": "Híbrido", "fof": "FoF"}.get(tipo, "—")
 
-    # Chips de topo (DY, P/VP, Vacância, Tipo)
+    # Cota atual em destaque no cabeçalho (com o tipo abaixo, em letra menor)
+    cota = _num(dados.get("cota_atual"))
+    if cota is not None:
+        cota_header = (
+            f"<div style='color:#fff;font-size:17px;font-weight:bold;'>"
+            f"R$ {_fmt_num(cota)}</div>"
+            f"<div style='color:#AFC6E0;font-size:11px;'>{tipo_label}</div>"
+        )
+    else:
+        cota_header = (f"<span style='background:rgba(255,255,255,0.18);color:#fff;"
+                       f"font-size:11px;padding:3px 10px;border-radius:10px;'>{tipo_label}</span>")
+
+    # Chips de topo (Últ. dividendo, DY, P/VP, Vacância, Tipo)
+    ult_div = _num(dados.get("ultimo_dividendo"))
     chips = ["<table role='presentation' cellpadding='0' cellspacing='0'><tr>"]
+    if ult_div is not None:
+        chips.append(_chip("Últ. dividendo", f"R$ {_fmt_num(ult_div, 2)}", "#E6F4EA", COR_INDEX))
+        chips.append("<td style='width:8px;'></td>")
     chips.append(_chip("DY 12M", _fmt_pct(dados.get("dy_12m")), "#E8F0F9", COR_PRIMARIA))
     chips.append("<td style='width:8px;'></td>")
     chips.append(_chip("P/VP", _fmt_num(dados.get("pvp")), "#E8F0F9", COR_PRIMARIA))
-    if isinstance(dados.get("vacancia_fisica"), (int, float)):
+    if _num(dados.get("vacancia_fisica")) is not None:
         chips.append("<td style='width:8px;'></td>")
         chips.append(_chip("Vacância", _fmt_pct(dados.get("vacancia_fisica")), "#FBEAE8", COR_VAC))
     chips.append("<td style='width:8px;'></td>")
@@ -396,11 +561,42 @@ def _card_fii(ticker, dados):
             + "".join(linhas) + "</table></div>"
         )
 
-    # Gráfico DY mensal
+    # Gráfico DY mensal (ordenado cronologicamente, com mês abreviado)
     dy_mensal = dados.get("dy_mensal") or []
-    serie_dy = [{"label": d.get("mes", ""), "valor": d.get("valor")}
-                for d in dy_mensal if isinstance(d, dict)]
+    serie_raw = [d for d in dy_mensal
+                 if isinstance(d, dict) and isinstance(d.get("valor"), (int, float))]
+    serie_raw.sort(key=lambda d: _parse_mes(d.get("mes", ""))[0])
+    serie_dy = [{"label": _parse_mes(d.get("mes", ""))[1], "valor": d.get("valor")}
+                for d in serie_raw]
     grafico_dy = _secao("DY mês a mês (R$/cota, últimos 12m)", _barras_verticais(serie_dy, COR_DY))
+
+    # Rentabilidade 12m vs CDI: gráfico de LINHA (imagem) se houver série mensal;
+    # senão, cai para as barras de comparação.
+    conteudo_rent = ""
+    png = _gerar_linha_png(dados.get("rentabilidade_mensal") or [])
+    if png is not None and imagens is not None:
+        cid = f"rent_{ticker.lower()}"
+        imagens.append((cid, png))
+        conteudo_rent = (
+            f"<img src='cid:{cid}' width='100%' "
+            f"style='max-width:600px;display:block;border:0;outline:none;' "
+            f"alt='Rentabilidade {ticker} vs CDI'>"
+        )
+        # Veredito textual abaixo do gráfico
+        rent = _num(dados.get("rentabilidade_12m"))
+        cdi = _num(dados.get("cdi_12m"))
+        if rent is not None and cdi is not None:
+            diff = rent - cdi
+            if diff >= 0:
+                conteudo_rent += (f"<div style='font-size:12px;margin-top:3px;font-weight:bold;"
+                                  f"color:{COR_INDEX};'>▲ {_fmt_pct(diff)} acima do CDI em 12m</div>")
+            else:
+                conteudo_rent += (f"<div style='font-size:12px;margin-top:3px;font-weight:bold;"
+                                  f"color:{COR_VAC};'>▼ {_fmt_pct(abs(diff))} abaixo do CDI em 12m</div>")
+    else:
+        conteudo_rent = _grafico_rentabilidade(dados.get("rentabilidade_12m"),
+                                               dados.get("cdi_12m"))
+    grafico_rent = _secao("Rentabilidade 12m (cota + dividendos) vs CDI", conteudo_rent)
 
     # Distribuição geográfica
     grafico_geo = _secao("Distribuição geográfica",
@@ -458,8 +654,7 @@ def _card_fii(ticker, dados):
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
           <td style="color:#fff;font-family:Arial,sans-serif;font-size:18px;
                      font-weight:bold;letter-spacing:0.5px;">{ticker}</td>
-          <td align="right"><span style="background:rgba(255,255,255,0.18);color:#fff;
-                     font-size:11px;padding:3px 10px;border-radius:10px;">{tipo_label}</span></td>
+          <td align="right">{cota_header}</td>
         </tr></table>
       </td></tr>
       <tr><td style="padding:16px 18px;font-family:Arial,sans-serif;">
@@ -468,6 +663,7 @@ def _card_fii(ticker, dados):
         {receita_html}
         {fatos_html}
         {grafico_dy}
+        {grafico_rent}
         {grafico_geo}
         {grafico_inq}
         {grafico_index}
@@ -499,7 +695,7 @@ def _card_erro(ticker, erro):
 # ----------------------------------------------------------------------
 # Montagem do e-mail
 # ----------------------------------------------------------------------
-def montar_html(resultados: list) -> str:
+def montar_html(resultados: list):
     hoje = datetime.now().strftime("%d/%m/%Y")
     meses_pt = ["janeiro", "fevereiro", "março", "abril", "maio", "junho",
                 "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"]
@@ -507,10 +703,11 @@ def montar_html(resultados: list) -> str:
     sucesso = sum(1 for r in resultados if "dados" in r)
     falha = len(resultados) - sucesso
 
+    imagens = []  # (cid, png_bytes) para anexar inline
     cards = []
     for r in resultados:
         if "dados" in r:
-            cards.append(_card_fii(r["ticker"], r["dados"]))
+            cards.append(_card_fii(r["ticker"], r["dados"], imagens))
         else:
             cards.append(_card_erro(r["ticker"], r.get("erro", "erro desconhecido")))
 
@@ -519,7 +716,7 @@ def montar_html(resultados: list) -> str:
                   f"font-family:Arial,sans-serif;font-size:13px;color:#C0392B;"
                   f"font-weight:bold;'>⚠ {falha} com erro</td>") if falha else ""
 
-    return f"""<!DOCTYPE html>
+    html = f"""<!DOCTYPE html>
 <html lang="pt-BR"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
 <body style="margin:0;padding:0;background:#EEF1F5;">
@@ -556,19 +753,31 @@ def montar_html(resultados: list) -> str:
     </td></tr>
   </table>
 </body></html>"""
+    return html, imagens
 
 
 # ----------------------------------------------------------------------
 # Envio de e-mail
 # ----------------------------------------------------------------------
-def enviar_email(html: str):
-    msg = MIMEMultipart("alternative")
+def enviar_email(html: str, imagens=None):
     meses_pt = ["janeiro", "fevereiro", "março", "abril", "maio", "junho",
                 "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"]
+    # 'related' agrupa o HTML + imagens inline (referenciadas por cid:)
+    msg = MIMEMultipart("related")
     msg["Subject"] = f"📊 Análise dos FIIs — {meses_pt[datetime.now().month-1]}/{datetime.now().year}"
     msg["From"] = GMAIL_USER
     msg["To"] = EMAIL_TO
-    msg.attach(MIMEText(html, "html", "utf-8"))
+
+    alt = MIMEMultipart("alternative")
+    alt.attach(MIMEText(html, "html", "utf-8"))
+    msg.attach(alt)
+
+    for cid, png in (imagens or []):
+        img = MIMEImage(png, _subtype="png")
+        img.add_header("Content-ID", f"<{cid}>")
+        img.add_header("Content-Disposition", "inline", filename=f"{cid}.png")
+        msg.attach(img)
+
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
         server.login(GMAIL_USER, GMAIL_APP_PASSWORD)
         server.sendmail(GMAIL_USER, EMAIL_TO.split(","), msg.as_string())
@@ -643,10 +852,10 @@ def main():
     resultados_ordenados = [resultados[t] for t in FIIS if t in resultados]
 
     print("\nMontando e enviando e-mail...")
-    html = montar_html(resultados_ordenados)
+    html, imagens = montar_html(resultados_ordenados)
     try:
-        enviar_email(html)
-        print(f"E-mail enviado para {EMAIL_TO}")
+        enviar_email(html, imagens)
+        print(f"E-mail enviado para {EMAIL_TO} ({len(imagens)} gráfico(s) de linha anexado(s))")
     except Exception as e:
         print(f"ERRO ao enviar e-mail: {e}")
         with open("analise_falhou.html", "w", encoding="utf-8") as f:
