@@ -59,7 +59,7 @@ try:
 except ValueError:
     DIA_DO_MES = 20
 
-MODEL = "gemini-2.5-flash"
+MODEL = SETTINGS.get("MODEL", "").strip() or "gemini-2.5-flash-lite"
 API_URL = (
     "https://generativelanguage.googleapis.com/v1beta/models/"
     f"{MODEL}:generateContent"
@@ -114,7 +114,10 @@ def carregar_fiis():
 
 FIIS = carregar_fiis()
 
-PAUSA_ENTRE_FIIS = 15      # segundos entre chamadas (mantém taxa baixa)
+try:
+    PAUSA_ENTRE_FIIS = int(SETTINGS.get("PAUSA_SEGUNDOS", "20"))
+except ValueError:
+    PAUSA_ENTRE_FIIS = 20
 ESPERA_RODADA = 120        # 2 min de espera antes de re-tentar os que deram 429
 MAX_RODADAS = 6            # máximo de rodadas de retry (evita loop infinito)
 

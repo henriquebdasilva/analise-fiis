@@ -1,8 +1,16 @@
 # Configurações do robô de análise de FIIs
 # Edite os valores abaixo. Linhas com # são comentário.
 
-# Para qual e-mail enviar o relatório (deixe em branco para usar o próprio Gmail remetente)
+# Para qual e-mail enviar o relatório (em branco = usa o próprio Gmail remetente)
 EMAIL_TO=
 
 # Dia do mês em que o relatório é enviado (1 a 28 recomendado)
 DIA_DO_MES=20
+
+# Modelo do Gemini. Opções gratuitas:
+#   gemini-2.5-flash-lite  -> limites maiores (30/min, 1000/dia) — recomendado p/ evitar 429
+#   gemini-2.5-flash       -> qualidade um pouco melhor, mas limite menor (10/min)
+MODEL=gemini-2.5-flash-lite
+
+# Segundos de pausa entre cada FII (aumente se ainda der rate limit; ex: 25 ou 30)
+PAUSA_SEGUNDOS=20
