@@ -27,7 +27,37 @@ import requests
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 GMAIL_USER = os.environ.get("GMAIL_USER", "").strip()
 GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "").strip()
-EMAIL_TO = os.environ.get("EMAIL_TO", "").strip() or GMAIL_USER
+
+ARQUIVO_SETTINGS = "settings.txt"
+
+
+def carregar_settings():
+    """Lê settings.txt (formato CHAVE=valor). Linhas com # são comentário."""
+    settings = {}
+    caminho = os.path.join(os.path.dirname(os.path.abspath(__file__)), ARQUIVO_SETTINGS)
+    if os.path.exists(caminho):
+        with open(caminho, "r", encoding="utf-8") as f:
+            for linha in f:
+                linha = linha.strip()
+                if not linha or linha.startswith("#") or "=" not in linha:
+                    continue
+                chave, _, valor = linha.partition("=")
+                settings[chave.strip().upper()] = valor.split("#")[0].strip()
+    return settings
+
+
+SETTINGS = carregar_settings()
+
+# Destinatário: env > settings.txt > o próprio Gmail
+EMAIL_TO = (os.environ.get("EMAIL_TO", "").strip()
+            or SETTINGS.get("EMAIL_TO", "").strip()
+            or GMAIL_USER)
+
+# Dia do mês para o envio agendado (usado junto com a verificação no main)
+try:
+    DIA_DO_MES = int(SETTINGS.get("DIA_DO_MES", "20"))
+except ValueError:
+    DIA_DO_MES = 20
 
 MODEL = "gemini-2.5-flash"
 API_URL = (
@@ -84,9 +114,9 @@ def carregar_fiis():
 
 FIIS = carregar_fiis()
 
-PAUSA_ENTRE_FIIS = 15
-MAX_RETRIES = 5
-RETRY_BACKOFF = 45
+PAUSA_ENTRE_FIIS = 15      # segundos entre chamadas (mantém taxa baixa)
+ESPERA_RODADA = 120        # 2 min de espera antes de re-tentar os que deram 429
+MAX_RODADAS = 6            # máximo de rodadas de retry (evita loop infinito)
 
 # Paleta
 COR_PRIMARIA = "#1F4E78"
@@ -106,6 +136,7 @@ def analisar_fii(ticker: str) -> dict:
         f"Responda APENAS com um objeto JSON válido (sem markdown, sem texto extra), "
         f"com estes campos. Use null quando NÃO tiver certeza — NÃO invente números:\n"
         f"{{\n"
+        f'  "descricao": "<descrição breve do fundo em 1 frase: o que é, segmento, gestora>",\n'
         f'  "tipo": "papel|tijolo|hibrido|fof",\n'
         f'  "dy_12m": <decimal ex 0.115 ou null>,\n'
         f'  "pvp": <decimal ex 0.92 ou null>,\n'
@@ -114,6 +145,9 @@ def analisar_fii(ticker: str) -> dict:
         f'ex: R$ 12,5 mi, ou null se não encontrar/não aplicável>",\n'
         f'  "dy_mensal": [<lista dos últimos 12 meses, do mais antigo ao recente, '
         f'cada item {{"mes":"AAAA-MM","valor":<R$/cota decimal>}} ou [] se não encontrar>],\n'
+        f'  "distribuicao_geografica": [<distribuição dos ativos/imóveis por estado ou região, '
+        f'cada item {{"regiao":"SP|RJ|MG|Sul|Nordeste|...","pct":<0-1>}}, máximo 6, '
+        f'do maior ao menor; [] se não encontrar>],\n'
         f'  "inquilinos": [<principais inquilinos por % da receita imobiliária, para '
         f'fundos de tijolo, cada item {{"nome":"...","pct":<0-1>}}, do maior ao menor, '
         f'máximo 6; [] se não aplicável ou não encontrar>],\n'
@@ -145,49 +179,32 @@ def analisar_fii(ticker: str) -> dict:
     headers = {"Content-Type": "application/json"}
     params = {"key": GEMINI_API_KEY}
 
-    for tentativa in range(1, MAX_RETRIES + 1):
-        try:
-            resp = requests.post(API_URL, headers=headers, params=params,
-                                 data=json.dumps(payload), timeout=120)
-        except Exception as e:
-            return {"ticker": ticker, "erro": f"Falha de conexão: {e}"}
+    try:
+        resp = requests.post(API_URL, headers=headers, params=params,
+                             data=json.dumps(payload), timeout=120)
+    except Exception as e:
+        return {"ticker": ticker, "erro": f"Falha de conexão: {e}"}
 
-        if resp.status_code == 429:
-            if tentativa < MAX_RETRIES:
-                espera = RETRY_BACKOFF
-                try:
-                    err = resp.json().get("error", {})
-                    for det in err.get("details", []):
-                        if "retryDelay" in det:
-                            s = str(det["retryDelay"]).replace("s", "").strip()
-                            if s.isdigit():
-                                espera = int(s) + 3
-                except Exception:
-                    pass
-                print(f"  [{ticker}] rate limit (429), aguardando {espera}s "
-                      f"(tentativa {tentativa}/{MAX_RETRIES})...")
-                time.sleep(espera)
-                continue
-            return {"ticker": ticker, "erro": "Rate limit persistente (429)"}
+    if resp.status_code == 429:
+        # Sinaliza rate limit para o main tentar de novo numa próxima rodada
+        return {"ticker": ticker, "erro": "Rate limit (429)", "rate_limited": True}
 
-        if resp.status_code != 200:
-            return {"ticker": ticker, "erro": f"HTTP {resp.status_code}: {resp.text[:160]}"}
+    if resp.status_code != 200:
+        return {"ticker": ticker, "erro": f"HTTP {resp.status_code}: {resp.text[:160]}"}
 
-        try:
-            data = resp.json()
-            cand = data["candidates"][0]
-            if cand.get("finishReason") == "MAX_TOKENS":
-                return {"ticker": ticker, "erro": "Resposta truncada (MAX_TOKENS)"}
-            texto = cand["content"]["parts"][0]["text"]
-        except (KeyError, IndexError) as e:
-            return {"ticker": ticker, "erro": f"Resposta inesperada: {e}"}
+    try:
+        data = resp.json()
+        cand = data["candidates"][0]
+        if cand.get("finishReason") == "MAX_TOKENS":
+            return {"ticker": ticker, "erro": "Resposta truncada (MAX_TOKENS)"}
+        texto = cand["content"]["parts"][0]["text"]
+    except (KeyError, IndexError) as e:
+        return {"ticker": ticker, "erro": f"Resposta inesperada: {e}"}
 
-        dados = _extrair_json(texto)
-        if dados is None:
-            return {"ticker": ticker, "erro": "JSON inválido da IA"}
-        return {"ticker": ticker, "dados": dados}
-
-    return {"ticker": ticker, "erro": "Falhou após retries"}
+    dados = _extrair_json(texto)
+    if dados is None:
+        return {"ticker": ticker, "erro": "JSON inválido da IA"}
+    return {"ticker": ticker, "dados": dados}
 
 
 def _extrair_json(texto: str):
@@ -254,7 +271,7 @@ def _barras_horizontais(serie, cor):
         return ""
     linhas = []
     for s in itens:
-        nome = s.get("nome") or s.get("faixa") or "—"
+        nome = s.get("nome") or s.get("faixa") or s.get("regiao") or "—"
         pct = max(0, min(1, float(s["pct"])))
         largura = round(pct * 100)
         linhas.append(
@@ -331,6 +348,15 @@ def _card_fii(ticker, dados):
     chips.append("</tr></table>")
     chips_html = "".join(chips)
 
+    # Descrição breve do fundo (no topo do card)
+    descricao = dados.get("descricao")
+    descricao_html = ""
+    if descricao and str(descricao).strip().lower() not in ("none", "null", ""):
+        descricao_html = (
+            f"<div style='margin:0 0 12px 0;color:#555;font-size:13px;"
+            f"font-style:italic;line-height:1.5;'>{descricao}</div>"
+        )
+
     # Receita de locação do último mês (linha destacada)
     receita = dados.get("receita_locacao_mes")
     receita_html = ""
@@ -372,6 +398,10 @@ def _card_fii(ticker, dados):
     serie_dy = [{"label": d.get("mes", ""), "valor": d.get("valor")}
                 for d in dy_mensal if isinstance(d, dict)]
     grafico_dy = _secao("DY mês a mês (R$/cota, últimos 12m)", _barras_verticais(serie_dy, COR_DY))
+
+    # Distribuição geográfica
+    grafico_geo = _secao("Distribuição geográfica",
+                         _barras_horizontais(dados.get("distribuicao_geografica") or [], "#3A7CA5"))
 
     # Principais inquilinos (com nota de concentração)
     inquilinos = [i for i in (dados.get("inquilinos") or [])
@@ -430,10 +460,12 @@ def _card_fii(ticker, dados):
         </tr></table>
       </td></tr>
       <tr><td style="padding:16px 18px;font-family:Arial,sans-serif;">
+        {descricao_html}
         {chips_html}
         {receita_html}
         {fatos_html}
         {grafico_dy}
+        {grafico_geo}
         {grafico_inq}
         {grafico_index}
         {grafico_prazo}
@@ -549,21 +581,66 @@ def main():
         print(f"ERRO: variáveis de ambiente faltando: {', '.join(faltando)}")
         sys.exit(1)
 
+    # Verificação do dia: quando acionado pelo AGENDADOR (schedule), só roda no
+    # dia configurado em settings.txt (DIA_DO_MES). Acionamento manual
+    # (workflow_dispatch) ou execução local rodam sempre.
+    evento = os.environ.get("GITHUB_EVENT_NAME", "").strip()
+    if evento == "schedule":
+        hoje = datetime.now().day
+        if hoje != DIA_DO_MES:
+            print(f"Agendado para o dia {DIA_DO_MES}; hoje é dia {hoje}. "
+                  f"Encerrando sem executar.")
+            sys.exit(0)
+        print(f"Dia {hoje} = dia configurado ({DIA_DO_MES}). Executando análise.")
+
     print(f"Analisando {len(FIIS)} FIIs: {', '.join(FIIS)}")
-    resultados = []
-    for i, ticker in enumerate(FIIS, 1):
-        print(f"[{i}/{len(FIIS)}] {ticker}...")
-        r = analisar_fii(ticker)
-        if "erro" in r:
-            print(f"  -> ERRO: {r['erro']}")
-        else:
-            print(f"  -> OK")
-        resultados.append(r)
-        if i < len(FIIS):
+
+    # resultados: ticker -> dict (guarda o que já foi obtido)
+    resultados = {}
+    pendentes = list(FIIS)  # FIIs ainda sem dados (ou que deram 429)
+
+    for rodada in range(1, MAX_RODADAS + 1):
+        if not pendentes:
+            break
+        if rodada > 1:
+            print(f"\n--- Rodada {rodada}: re-tentando {len(pendentes)} FII(s) "
+                  f"que deram rate limit ---")
+
+        ainda_429 = []
+        for i, ticker in enumerate(pendentes, 1):
+            print(f"[rodada {rodada}] [{i}/{len(pendentes)}] {ticker}...")
+            r = analisar_fii(ticker)
+
+            if "dados" in r:
+                resultados[ticker] = r
+                print("  -> OK")
+            elif r.get("rate_limited"):
+                # Guarda o erro (caso seja a última rodada) e marca para re-tentar
+                resultados[ticker] = r
+                ainda_429.append(ticker)
+                print("  -> 429 (será re-tentado)")
+            else:
+                resultados[ticker] = r
+                print(f"  -> ERRO: {r['erro']}")
+
             time.sleep(PAUSA_ENTRE_FIIS)
 
-    print("Montando e enviando e-mail...")
-    html = montar_html(resultados)
+        pendentes = ainda_429
+        if pendentes and rodada < MAX_RODADAS:
+            print(f"\nAguardando {ESPERA_RODADA}s para a cota renovar antes da "
+                  f"próxima rodada ({len(pendentes)} pendente(s))...")
+            time.sleep(ESPERA_RODADA)
+
+    if pendentes:
+        print(f"\nATENÇÃO: {len(pendentes)} FII(s) seguem com 429 após "
+              f"{MAX_RODADAS} rodadas: {', '.join(pendentes)}. "
+              f"Enviando e-mail com o que foi obtido.")
+
+    # Reordena os resultados na ordem original da carteira
+    resultados_ordenados = [resultados[t] for t in FIIS if t in resultados]
+
+    print("\nMontando e enviando e-mail...")
+    html = montar_html(resultados_ordenados)
     try:
         enviar_email(html)
         print(f"E-mail enviado para {EMAIL_TO}")
