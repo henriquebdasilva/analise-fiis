@@ -1,0 +1,42 @@
+name: Analise Mensal de FIIs
+
+"on":
+  workflow_dispatch:
+  schedule:
+    # Roda todo dia às 12:00 UTC (~09:00 Brasília). O script só executa de fato
+    # no dia configurado em settings.txt (DIA_DO_MES); nos outros dias ele sai
+    # em segundos sem fazer nada.
+    - cron: "0 12 * * *"
+
+jobs:
+  analisar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar o codigo
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Rodar analise e enviar e-mail
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          FIIS: ${{ secrets.FIIS }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+        run: python analise_fiis.py
+
+      - name: Salvar HTML se falhar
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: analise-html
+          path: analise_falhou.html
+          if-no-files-found: ignore

@@ -1,0 +1,8 @@
+# Configurações do robô de análise de FIIs
+# Edite os valores abaixo. Linhas com # são comentário.
+
+# Para qual e-mail enviar o relatório (deixe em branco para usar o próprio Gmail remetente)
+EMAIL_TO=
+
+# Dia do mês em que o relatório é enviado (1 a 28 recomendado)
+DIA_DO_MES=20
