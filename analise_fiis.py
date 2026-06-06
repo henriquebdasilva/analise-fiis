@@ -157,10 +157,6 @@ def analisar_fii(ticker: str) -> dict:
         f'(preencha sempre, é um dado macro conhecido), ou null>,\n'
         f'  "ifix_12m": <variação do índice IFIX nos últimos 12 meses, decimal ex 0.09, '
         f'pode ser negativo (dado público), ou null>,\n'
-        f'  "rentabilidade_mensal": [<retorno ACUMULADO mês a mês dos últimos 12 meses, '
-        f'do mais antigo ao mais recente, começando próximo de 0 e crescendo; cada item '
-        f'{{"mes":"AAAA-MM","fii":<acum. do FII>,"cdi":<acum. do CDI>,"ifix":<acum. do IFIX>}}; '
-        f'[] se não conseguir estimar com confiança>],\n'
         f'  "vacancia_fisica": <decimal 0-1 ou null se não for tijolo>,\n'
         f'  "receita_locacao_mes": "<receita de locação do último mês com unidade, '
         f'ex: R$ 12,5 mi, ou null se não encontrar/não aplicável>",\n'
@@ -602,25 +598,12 @@ def _card_fii(ticker, dados, imagens=None):
                 for d in serie_raw]
     grafico_dy = _secao("DY mês a mês (R$/cota, últimos 12m)", _barras_verticais(serie_dy, COR_DY))
 
-    # Rentabilidade 12m vs CDI vs IFIX: gráfico de LINHA (imagem) se houver série
-    # mensal; senão, cai para as barras de comparação (que mostram o que houver).
-    conteudo_rent = ""
-    png = _gerar_linha_png(dados.get("rentabilidade_mensal") or [])
-    if png is not None and imagens is not None:
-        cid = f"rent_{ticker.lower()}"
-        imagens.append((cid, png))
-        conteudo_rent = (
-            f"<img src='cid:{cid}' width='100%' "
-            f"style='max-width:600px;display:block;border:0;outline:none;' "
-            f"alt='Rentabilidade {ticker} vs CDI vs IFIX'>"
-            + _veredito_rent(dados.get("rentabilidade_12m"),
-                             dados.get("cdi_12m"), dados.get("ifix_12m"))
-        )
-    else:
-        conteudo_rent = _grafico_rentabilidade(dados.get("rentabilidade_12m"),
-                                               dados.get("cdi_12m"),
-                                               dados.get("ifix_12m"))
-    grafico_rent = _secao("Rentabilidade 12m (cota + dividendos) vs CDI vs IFIX", conteudo_rent)
+    # Rentabilidade 12m vs CDI vs IFIX: barras de comparação (mostra o que houver).
+    grafico_rent = _secao(
+        "Rentabilidade 12m (cota + dividendos) vs CDI vs IFIX",
+        _grafico_rentabilidade(dados.get("rentabilidade_12m"),
+                               dados.get("cdi_12m"),
+                               dados.get("ifix_12m")))
 
     # Distribuição geográfica
     grafico_geo = _secao("Distribuição geográfica",
