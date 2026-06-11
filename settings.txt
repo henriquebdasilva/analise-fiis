@@ -13,4 +13,4 @@ DIA_DO_MES=20
 MODEL=gemini-2.5-flash
 
 # Segundos de pausa entre cada FII (aumente se ainda der rate limit; ex: 25 ou 30)
-PAUSA_SEGUNDOS=80
+PAUSA_SEGUNDOS=120
