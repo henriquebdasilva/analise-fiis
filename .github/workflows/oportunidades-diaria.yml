@@ -1,0 +1,41 @@
+name: Radar de Oportunidades (diario)
+
+"on":
+  workflow_dispatch:
+  schedule:
+    # Roda todo dia as 13:00 UTC (~10:00 Brasilia). Diferente do relatorio mensal
+    # (que roda 12:00 UTC), para nao competirem pela cota da API ao mesmo tempo.
+    # Este servico envia e-mail TODO dia (se houver alguma oportunidade atrativa).
+    - cron: "0 13 * * *"
+
+jobs:
+  oportunidades:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar o codigo
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Rodar radar de oportunidades
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          FIIS: ${{ secrets.FIIS }}
+        run: python oportunidades.py
+
+      - name: Salvar HTML se falhar
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oportunidades-html
+          path: oportunidades_falhou.html
+          if-no-files-found: ignore
