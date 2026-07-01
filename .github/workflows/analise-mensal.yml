@@ -3,7 +3,7 @@ name: Analise Mensal de FIIs
 "on":
   workflow_dispatch:
   schedule:
-    - cron: "0 12 20 * *"
+  #  - cron: "0 12 20 * *"
 
 jobs:
   analisar:
