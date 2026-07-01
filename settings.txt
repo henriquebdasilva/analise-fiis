@@ -10,10 +10,10 @@ DIA_DO_MES=20
 # Modelo do Gemini. Opções gratuitas:
 #   gemini-2.5-flash-lite  -> limites maiores (30/min, 1000/dia) — recomendado p/ evitar 429
 #   gemini-2.5-flash       -> qualidade um pouco melhor, mas limite menor (10/min)
-MODEL=gemini-2.5-flash-lite
+MODEL=gemini-2.5-flash
 
 # Segundos de pausa entre cada FII (aumente se ainda der rate limit; ex: 25 ou 30)
-PAUSA_SEGUNDOS=20
+PAUSA_SEGUNDOS=60
 
 # --- Alertas de variação (#2) ---
 # Queda percentual (vs último registro do histórico) que dispara alerta
