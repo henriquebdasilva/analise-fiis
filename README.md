@@ -1,171 +1,80 @@
-# 📊 Robô de Análise Mensal de FIIs
+# 🤖 Robô de FIIs — versão modular
 
-Analisa automaticamente os relatórios/dados dos seus FIIs uma vez por mês e
-envia um resumo por e-mail. **Sem custo, sem scraping frágil, sem servidor próprio.**
+Robô que analisa sua carteira de FIIs com IA (Google Gemini + busca na web) e
+envia relatórios por e-mail. Reformulado em módulos, com 3 modos e histórico próprio.
 
-Como funciona: um script Python roda na nuvem do GitHub (grátis) todo dia 20.
-Para cada FII, ele pergunta ao **Google Gemini** (que busca na web sozinho — por
-isso não precisamos baixar PDF nem driblar bloqueios). O resultado vira um
-e-mail formatado enviado para você.
-
----
-
-## ⚙️ Configurações (settings.txt)
-
-O arquivo **`settings.txt`** controla o robô sem mexer no código:
-
-```
-EMAIL_TO=destino@email.com    # para quem enviar (em branco = seu próprio Gmail)
-DIA_DO_MES=20                 # dia do mês em que o relatório é enviado
-MODEL=gemini-2.5-flash-lite   # modelo do Gemini (veja abaixo)
-PAUSA_SEGUNDOS=20             # pausa entre cada FII (aumente se der rate limit)
-```
-
-Para mudar, edite o arquivo no GitHub (clique nele → lápis → edita → commit).
-
-**Sobre o MODEL e o rate limit (429):** o Google reduziu muito os limites do
-tier gratuito no fim de 2025, e a busca na web (grounding) consome mais cota.
-Por isso o padrão é o **`gemini-2.5-flash-lite`**, que tem limite bem maior
-(~30/min e 1.000/dia). Se ainda aparecer 429, aumente o `PAUSA_SEGUNDOS` para
-25 ou 30. Se quiser qualidade um pouco melhor e topar alguns 429 (que o robô
-re-tenta sozinho), troque para `gemini-2.5-flash`.
-
-> **Como o dia funciona:** o GitHub aciona o robô todos os dias, mas ele só
-> executa de fato no dia configurado em `DIA_DO_MES` — nos outros dias encerra
-> em segundos. O disparo manual ("Run workflow") roda sempre, para testar.
-
----
-
-## 📝 Editar a lista de FIIs
-
-A carteira fica no arquivo **`carteira.txt`** — um ticker por linha. Para adicionar
-ou remover um FII, edite esse arquivo direto no GitHub:
-
-1. No repositório, clique em **`carteira.txt`**
-2. Clique no lápis (✏️ Edit)
-3. Adicione/remova as linhas (um ticker por linha)
-4. **Commit changes**
-
-Linhas em branco e linhas começando com `#` são ignoradas (servem como comentário).
-Não precisa mexer no código Python.
-
-> Ordem de prioridade: se você definir o secret `FIIS` no GitHub, ele tem
-> prioridade sobre o `carteira.txt`. Sem o secret, vale o arquivo. Sem o arquivo,
-> usa a lista padrão embutida no script.
-
----
-
-## ✅ O que você vai precisar (tudo gratuito)
-
-1. Conta no **GitHub** (github.com)
-2. Chave da **API do Gemini** (aistudio.google.com)
-3. **Senha de app do Gmail** (para o robô enviar e-mail pela sua conta)
-
----
-
-## 🔧 Passo a passo de instalação
-
-### 1. Pegar a chave do Gemini
-
-1. Acesse **aistudio.google.com** e faça login
-2. Clique em **"Get API Key"** → **"Create API key"**
-3. Copie a chave (guarde, você vai colar no GitHub depois)
-
-### 2. Gerar a senha de app do Gmail
-
-> A senha de app é diferente da sua senha normal. Ela permite que o script
-> envie e-mail pela sua conta com segurança.
-
-1. Ative a **verificação em 2 etapas** na sua Conta Google (se ainda não tiver):
-   myaccount.google.com → Segurança → Verificação em duas etapas
-2. Depois, acesse: myaccount.google.com/apppasswords
-3. Dê um nome (ex: "Robô FIIs") e clique em **Criar**
-4. Copie a senha de **16 caracteres** que aparecer (sem espaços)
-
-### 3. Criar o repositório no GitHub
-
-1. Em github.com, clique em **"New repository"**
-2. Nome: `analise-fiis` (ou o que preferir). Pode deixar **Privado**.
-3. Crie o repositório
-4. Faça upload destes arquivos (botão "Add file" → "Upload files"):
-   - `analise_fiis.py`
-   - `requirements.txt`
-   - `carteira.txt`
-   - `settings.txt`
-   - a pasta `.github/workflows/analise-mensal.yml`
-   
-   > Dica: para subir a pasta `.github/workflows/`, ao fazer upload digite
-   > `.github/workflows/analise-mensal.yml` no nome do arquivo que o GitHub
-   > cria as pastas sozinho.
-
-### 4. Configurar os segredos (Secrets)
-
-No seu repositório: **Settings** → **Secrets and variables** → **Actions**
-→ botão **"New repository secret"**. Crie um por um:
-
-| Nome do Secret | Valor |
-|---|---|
-| `GEMINI_API_KEY` | sua chave do Gemini |
-| `GMAIL_USER` | seu e-mail Gmail completo |
-| `GMAIL_APP_PASSWORD` | a senha de app de 16 caracteres |
-| `EMAIL_TO` | (opcional) e-mail destino, se diferente do GMAIL_USER |
-| `FIIS` | (opcional) lista personalizada, ex: `MXRF11,KNCR11,HGLG11` |
-
-> Se não criar o `FIIS`, ele usa a carteira padrão de 16 FIIs já embutida no script.
-
-### 5. Testar agora (sem esperar o dia 20)
-
-1. No repositório, aba **"Actions"**
-2. Clique em **"Análise Mensal de FIIs"** na lista à esquerda
-3. Botão **"Run workflow"** → **"Run workflow"**
-4. Aguarde ~2 minutos e veja o log (clique na execução)
-5. Confira seu e-mail 📬
-
----
-
-## 📅 Quando roda automaticamente
-
-Todo **dia 20 de cada mês**, por volta das **9h (horário de Brasília)**.
-Para mudar, edite a linha `cron: "0 12 20 * *"` no arquivo
-`.github/workflows/analise-mensal.yml` (o horário está em UTC).
-
----
-
-## 🐛 Se algo der errado
-
-- **Erro de e-mail (autenticação):** confira se usou a *senha de app* (16 dígitos),
-  não a senha normal do Gmail. Verifique também se a verificação em 2 etapas está ativa.
-- **Erro 429 (rate limit):** o script já tenta de novo sozinho. Se persistir,
-  reduza a lista de FIIs ou aumente `PAUSA_ENTRE_FIIS` no script.
-- **Erro de chave Gemini:** confira o secret `GEMINI_API_KEY`.
-- **Ver o que aconteceu:** aba Actions → clique na execução → veja o log linha a linha.
-
----
-
-## ⚠️ Avisos
-
-- A IA pode errar ou usar dados levemente defasados. **Sempre confira antes de decidir.**
-- Isto **não é recomendação de investimento**.
-- O tier gratuito do Gemini cobre folgadamente 16 FIIs/mês (limite de 1.500 buscas/dia).
-
----
-
-## 💻 Rodar localmente (alternativa ao GitHub)
-
-Se preferir rodar no seu próprio computador:
+## Modos (um robô, três funções)
 
 ```bash
-pip install -r requirements.txt
-
-export GEMINI_API_KEY="sua_chave"
-export GMAIL_USER="seu@gmail.com"
-export GMAIL_APP_PASSWORD="senha_de_app_16_digitos"
-# opcional:
-export EMAIL_TO="destino@email.com"
-export FIIS="MXRF11,KNCR11,HGLG11"
-
-python analise_fiis.py
+python robo.py --modo mensal         # relatório completo (1x/mês, no DIA_DO_MES)
+python robo.py --modo oportunidades  # radar de oportunidades de compra (1x/dia)
+python robo.py --modo alertas        # alertas de variação brusca (dias úteis)
 ```
 
-No Windows (PowerShell), use `$env:GEMINI_API_KEY="..."` no lugar de `export`.
-Para agendar mensalmente: Agendador de Tarefas (Windows) ou cron (Mac/Linux).
+| Modo | O que faz | Quando envia e-mail |
+|---|---|---|
+| **mensal** | Análise detalhada de cada FII (cards, gráficos, inquilinos, indexadores) + 📌 resumo executivo no topo | Sempre (no dia configurado) |
+| **oportunidades** | Só os FIIs atrativos hoje (P/VP, mín. 52s, DY, composição, vantagens, tese, **comparação com o setor**) | Só se houver algum atrativo |
+| **alertas** | Detecta quedas fortes e P/VP abaixo do piso, comparando com o **histórico próprio** | Só se houver algum alerta |
+
+## Estrutura
+
+```
+robo.py                      ← ponto de entrada (--modo)
+core/
+  config.py                  ← settings.txt, carteira.txt, credenciais
+  gemini.py                  ← chamada à IA + retry em rodadas (anti-429)
+  util.py                    ← parsing/formatação BR
+  email_sender.py            ← envio via Gmail
+  historico.py               ← grava/lê historico.csv (base própria de dados)
+relatorios/
+  mensal.py                  ← relatório completo + resumo executivo
+  oportunidades.py           ← radar + comparação com setor
+  alertas.py                 ← alertas de variação
+carteira.txt, settings.txt   ← configuração
+historico.csv                ← criado/atualizado automaticamente
+.github/workflows/           ← mensal.yml, oportunidades.yml, alertas.yml
+```
+
+## As 6 melhorias
+
+1. **Histórico** — cada execução grava cota/P/VP/DY em `historico.csv`, commitado
+   pelo próprio workflow. Vira uma base própria e confiável ao longo do tempo.
+2. **Alertas de variação** — modo `alertas` só te avisa quando algo relevante
+   acontece (queda > `ALERTA_QUEDA_PCT`% ou P/VP <= `ALERTA_PVP_MAX`).
+3. **Resiliência** — se nenhum FII retornar dados (ex: rate limit total), envia um
+   e-mail curto de "heartbeat" avisando, em vez de silêncio. Erros inesperados
+   também disparam aviso.
+4. **Consolidação** — um só `robo.py` com modos; código compartilhado em `core/`.
+5. **Comparação com o setor** — no radar, mostra se o P/VP do fundo está acima/
+   abaixo da média do segmento dele.
+6. **Resumo executivo** — parágrafo no topo do relatório mensal (nº de FIIs,
+   maior DY, menor P/VP, quantos abaixo do VP).
+
+## Configuração (settings.txt)
+
+```
+EMAIL_TO=              # em branco = usa o próprio Gmail
+DIA_DO_MES=20          # dia do relatório mensal
+MODEL=gemini-2.5-flash-lite
+PAUSA_SEGUNDOS=20      # pausa entre FIIs (anti-429)
+ALERTA_QUEDA_PCT=7     # queda que dispara alerta
+ALERTA_PVP_MAX=0.90    # P/VP que dispara alerta
+```
+
+Secrets do GitHub (Settings → Secrets → Actions): `GEMINI_API_KEY`, `GMAIL_USER`,
+`GMAIL_APP_PASSWORD`, `EMAIL_TO` (opcional), `FIIS` (opcional).
+
+## Instalação no GitHub
+
+1. Suba a pasta inteira para o repositório (mantendo a estrutura de pastas).
+2. Confirme os secrets.
+3. Os 3 workflows aparecem na aba **Actions**; teste cada um com **Run workflow**.
+
+## Observações honestas
+
+- Os dados vêm da IA com busca na web — P/VP, mínimas e composição podem ter
+  imprecisões. Use como ponto de partida; confira no Status Invest.
+- O modo **alertas** precisa de pelo menos 2 execuções para ter histórico e
+  detectar quedas (a 1ª só popula a base).
+- ⚠️ Não é recomendação de investimento.
