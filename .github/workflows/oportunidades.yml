@@ -1,12 +1,12 @@
-name: FIIs - Relatorio Mensal
+name: FIIs - Radar de Oportunidades (diario)
 
 "on":
   workflow_dispatch:
   schedule:
-    - cron: "0 12 * * *"   # todo dia 12h UTC; o script checa o DIA_DO_MES
+    - cron: "0 13 * * *"   # todo dia 13h UTC (~10h BRT)
 
 jobs:
-  mensal:
+  oportunidades:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -14,15 +14,14 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
-      - name: Rodar relatorio mensal
+      - name: Rodar radar de oportunidades
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
           FIIS: ${{ secrets.FIIS }}
-          GITHUB_EVENT_NAME: ${{ github.event_name }}
-        run: python robo.py --modo mensal
+        run: python robo.py --modo oportunidades
       - name: Salvar historico (commit)
         run: |
           git config user.name "github-actions"
